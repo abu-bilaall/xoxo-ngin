@@ -1,0 +1,84 @@
+import net from "node:net";
+import 'dotenv/config';
+
+const HTTP_METHODS = ['GET', 'POST', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH'];
+let connectionsCount = 0;
+const server = net.createServer((c) => {
+  let rawBuffer = Buffer.alloc(0);
+  let headersParsed = false;
+  let contentLength = 0;
+  let headerLength = 0;
+
+  c.on('data', (chunk: Buffer) => {
+
+    rawBuffer = Buffer.concat([rawBuffer, chunk]);
+    
+    const requestString = rawBuffer.toString("utf-8");
+    const method = requestString.split(' ')[0] as string;
+    const resource = requestString.split(' ')[1] as string;
+    if (HTTP_METHODS.includes(method)) {
+      console.log(`[HTTP Request Detected] Method: ${method}`);
+    } else {
+      return;
+    }
+    
+    if (!headersParsed) {
+      const headerEndIndex = rawBuffer.indexOf('\r\n\r\n');
+      if (headerEndIndex !== -1) {
+              headersParsed = true;
+              headerLength = headerEndIndex + 4; // Include the \r\n\r\n
+
+              const headerString = rawBuffer.subarray(0, headerEndIndex).toString('utf8');
+
+              // Find Content-Length if it exists (for POST/PUT requests)
+              const contentLengthMatch = headerString.match(/Content-Length:\s*(\d+)/i);
+              if (contentLengthMatch) {
+                contentLength = parseInt(contentLengthMatch[1] as string, 10);
+              }
+            }
+          }
+
+          // 3. Check if the entire payload (Headers + Body) has arrived
+          if (headersParsed) {
+            const totalExpectedLength = headerLength + contentLength;
+
+            if (rawBuffer.length >= totalExpectedLength) {
+              processHttpRequest(c, resource);
+              rawBuffer = Buffer.alloc(0);
+              headersParsed = false;
+            }
+          }
+        });
+});
+
+function processHttpRequest(socket: net.Socket, resource: string) {
+  let body: string;
+  let statusLine: string;
+  if (resource === "/") {
+    statusLine = "HTTP/1.1 200 OK";
+    body = `{"message": "Hello, World!", server: ${process.env.SERVER_NAME}}`;
+  } else {
+    statusLine = "HTTP/1.1 404 NOT FOUND";
+    body = `{"message": "Resource not found", server: ${process.env.SERVER_NAME}}`;
+  }
+  const res = `${statusLine}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
+  socket.write(res);
+  socket.end();
+}
+
+server.listen(process.env.PORT, () => {
+  console.log(`${process.env.SERVER_NAME} is listening for requests on port: ${process.env.PORT}`);
+});
+
+server.on('error', (err) => {
+  throw err;
+});
+
+server.on('connection', () => {
+  connectionsCount++;
+  console.log(`[Connection arrived] Total connections count: ${connectionsCount}`);
+});
+
+server.on("close", () => {
+  console.log(`${process.env.SERVER_NAME} is closing..`);
+});
