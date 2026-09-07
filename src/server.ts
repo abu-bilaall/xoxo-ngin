@@ -1,14 +1,19 @@
 import net from "node:net";
 import "dotenv/config";
 
+function buildResponse(statusLine: string, body: string) {
+  return `${statusLine}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
+}
+
 function send400(socket: net.Socket, msg = "Client error") {
   const statusLine = "HTTP/1.1 400 CLIENT ERROR";
   const body = `{"message": "${msg}", "server": "${process.env.SERVER_NAME}"}`;
-  const res = `${statusLine}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
-  socket.write(res);
+  socket.write(buildResponse(statusLine, body));
   socket.end();
 }
 const HTTP_METHODS = ["GET", "POST", "DELETE", "HEAD", "OPTIONS", "PATCH"];
+const MAX_HEADER_SIZE = 8192;
+const MAX_BODY_SIZE = 1048576;
 let connectionsCount = 0;
 const server = net.createServer((c) => {
   let rawBuffer = Buffer.alloc(0);
@@ -38,6 +43,16 @@ const server = net.createServer((c) => {
     }
 
     if (!headersParsed) {
+      if (
+        rawBuffer.length > MAX_HEADER_SIZE &&
+        rawBuffer.indexOf("\r\n\r\n") === -1
+      ) {
+        const statusLine = "HTTP/1.1 413 PAYLOAD TOO LARGE";
+        const body = `{"message": "Header payload exceeds max size", "server": "${process.env.SERVER_NAME}"}`;
+        c.write(buildResponse(statusLine, body));
+        c.end();
+        return;
+      }
       const headerEndIndex = rawBuffer.indexOf("\r\n\r\n");
       if (headerEndIndex !== -1) {
         headersParsed = true;
@@ -53,6 +68,13 @@ const server = net.createServer((c) => {
         );
         if (contentLengthMatch) {
           contentLength = parseInt(contentLengthMatch[1] as string, 10);
+        }
+        if (contentLength > MAX_BODY_SIZE) {
+          const statusLine = "HTTP/1.1 413 PAYLOAD TOO LARGE";
+          const body = `{"message": "Body exceeds max size", "server": "${process.env.SERVER_NAME}"}`;
+          c.write(buildResponse(statusLine, body));
+          c.end();
+          return;
         }
       }
     }
@@ -78,14 +100,13 @@ function processHttpRequest(socket: net.Socket, resource: string) {
 
   if (resource === "/") {
     statusLine = "HTTP/1.1 200 OK";
-    body = `{"message": "Hello, World!", "server": "${process.env.SERVER_NAME}}"`;
+    body = `{"message": "Hello, World!", "server": "${process.env.SERVER_NAME}"}`;
   } else {
     statusLine = "HTTP/1.1 404 NOT FOUND";
-    body = `{"message": "Resource not found", "server": "${process.env.SERVER_NAME}}"`;
+    body = `{"message": "Resource not found", "server": "${process.env.SERVER_NAME}"}`;
   }
 
-  const res = `${statusLine}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
-  socket.write(res);
+  socket.write(buildResponse(statusLine, body));
   socket.end();
 }
 
