@@ -1,6 +1,13 @@
 import net from "node:net";
 import "dotenv/config";
 
+function send400(socket: net.Socket, msg = "Client error") {
+  const statusLine = "HTTP/1.1 400 CLIENT ERROR";
+  const body = `{"message": "${msg}", "server": "${process.env.SERVER_NAME}"}`;
+  const res = `${statusLine}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
+  socket.write(res);
+  socket.end();
+}
 const HTTP_METHODS = ["GET", "POST", "DELETE", "HEAD", "OPTIONS", "PATCH"];
 let connectionsCount = 0;
 const server = net.createServer((c) => {
@@ -12,14 +19,21 @@ const server = net.createServer((c) => {
   c.on("data", (chunk: Buffer) => {
     rawBuffer = Buffer.concat([rawBuffer, chunk]);
 
-    const requestLine = rawBuffer
-      .subarray(0, rawBuffer.indexOf("\r\n"))
-      .toString("utf-8");
-    const method = requestLine.split(" ")[0] as string;
-    const resource = requestLine.split(" ")[1] as string;
-    if (HTTP_METHODS.includes(method)) {
+    const lineEnd = rawBuffer.indexOf("\r\n");
+    if (lineEnd === -1) {
+      return;
+    }
+    const requestLine = rawBuffer.subarray(0, lineEnd).toString("utf-8");
+    const method = requestLine.split(" ")[0];
+    const resource = requestLine.split(" ")[1];
+    if (!method || !resource) {
+      send400(c, "Method or resource not defined");
+      return;
+    }
+    if (HTTP_METHODS.includes(method as string)) {
       console.log(`[HTTP Request Detected] Method: ${method}`);
     } else {
+      send400(c, "Not a valid HTTP method");
       return;
     }
 
